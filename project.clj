@@ -6,7 +6,7 @@
   :dependencies [[org.clojure/clojure "1.8.0"]
                  [org.clojure/core.async "0.2.385"]
                  [com.taoensso/timbre "4.3.1"]
-                 [org.clojure/tools.cli "0.2.4"]]
+                 [org.clojure/tools.cli "0.3.5"]]
   :main ^:skip-aot concurtimes.core
   :target-path "target/%s"
   :bin {:name "concurtimes"}
