@@ -9,5 +9,6 @@
                  [org.clojure/tools.cli "0.3.5"]]
   :main ^:skip-aot concurtimes.core
   :target-path "target/%s"
-  :bin {:name "concurtimes"}
+  :bin {:name "concurtimes"
+        :bin-path "./bin"}
   :profiles {:uberjar {:aot :all}})

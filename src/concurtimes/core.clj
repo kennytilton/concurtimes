@@ -3,7 +3,7 @@
             [clojure.java.io :as io]
             [taoensso.timbre :as log]
             [clojure.core.async
-             :refer [go go-loop chan >! <! close!]
+             :refer [go go-loop chan >! <! <!! >!! close!]
              :as async]
             [clojure.string :as str]
             [clojure.pprint :as pp])
@@ -67,49 +67,51 @@
     out))
 
 #_
-(let [files [
-             "its-in-the-hole"
-             "mobydick"
-             "gettysburgh"
-             ;;"cells-manifesto"
-             ;;"obama-wright"
-             ]]
-  (apply go-cols 80 2 files))
+(-main "-w80" "-t0" "-s2" )
 
-(defn print-in-columns [w p filepaths]
-  (when-not (empty? filepaths)
-    (let [
-          col-spacing (or p 2)
-          file-ct (count filepaths)
-          col-width (int (Math/floor (/ (- (or w 132)
-                                          (* (dec file-ct) col-spacing))
-                                       file-ct)))
-          col-pad (apply str (repeat col-spacing \space))
-          filler (apply str (repeat col-width \space))
-          feeders (for [fp filepaths]
-                    (column-feeder fp col-width))
-          wnew #(print \newline) ;; #(.newLine out)
-          wout (fn [x] (println x)
-                 #_(.write out x))
-          ]
-      
-      (go-loop []
-        (let [chunks (loop [[f & rf] feeders taken []]
-                       ;; asynch does not play well with fns or even FORs
-                       ;; so we have to gather in LOOP
-                       (if (nil? f) taken
-                           (recur rf (conj taken (<! f)))))]
-          (cond
-            (every? nil? chunks)
-            (do
-              (wnew)
-              (wout "The End"))
-            
-            :default
-            (do 
-              (wout (str/join col-pad (map #(or % filler) chunks)))
-              (recur)))))
-      nil)))
+(defn print-in-columns [w p filepaths done]
+  (println :entry filepaths (empty? filepaths))
+  (cond
+    (empty? filepaths) (do
+                         (println :sending-done)
+                         (>!! done :no-files))
+    :default
+    (try
+      (let [
+            col-spacing (or p 2)
+            file-ct (count filepaths)
+            col-width (int (Math/floor (/ (- (or w 132)
+                                            (* (dec file-ct) col-spacing))
+                                         file-ct)))
+            col-pad (apply str (repeat col-spacing \space))
+            filler (apply str (repeat col-width \space))
+            feeders (for [fp filepaths]
+                      (column-feeder fp col-width))
+            wnew #(print \newline) ;; #(.newLine out)
+            wout (fn [x] (println x)
+                   #_(.write out x))
+            ]
+
+        (go-loop []
+          (let [chunks (loop [[f & rf] feeders taken []]
+                         ;; asynch does not play well with fns or even FORs
+                         ;; so we have to gather in LOOP
+                         (if (nil? f) taken
+                             (recur rf (conj taken (<! f)))))]
+            (cond
+              (every? nil? chunks)
+              (do
+                (wnew)
+                (println "The End")
+                (>! done 42))
+              
+              :default
+              (do 
+                (wout (str/join col-pad (map #(or % filler) chunks)))
+                (recur))))))
+      (catch Exception e
+        (println :error e)
+        (>!! done :abend)))))
 
 
 (def times-cli
@@ -133,8 +135,7 @@
   )
 
 #_
-(-main "-w80" "-t5" "-s2" "--help"
-  "LICENSE")
+(-main "-w30" "-t0" "-s2" )
 
 (def known ["its-in-the-hole"
              "mobydick"
@@ -143,20 +144,36 @@
              "obama-wright"])
 
 (defn -main [& args]
+  (Thread/setDefaultUncaughtExceptionHandler
+     (reify Thread$UncaughtExceptionHandler
+       (uncaughtException [_ thread ex]
+         (log/error {:what :uncaught-exception
+                     :exception ex
+                     :where (str "Uncaught exception on" (.getName thread))}))))
+
   (let [input (parse-opts args times-cli)
-        {:keys [options arguments summary]} input
-        {:keys [width spacing test help]} options]
+        {:keys [options arguments summary errors]} input
+        {:keys [width spacing test help]} options
+        filepaths (concat arguments
+                    (subvec (vec (for [f known] (str "resources/" f ".txt")))
+                      0 test))]
     
-    (when help
-      (println "\nUsage:\n\n    concurtimes options* files*\n\n"
-        "Options:\n" (subs summary 1)))
+    (cond
+      errors (doseq [e errors]
+               (println e))
+      help (println "\nUsage:\n\n    concurtimes options* files*\n\n"
+             "Options:\n" (subs summary 1))
 
-    (print-in-columns width spacing
-      (concat
-        arguments
-        (subvec (vec (for [f known] (str "resources/" f ".txt")))
-          0 test)))
+      (not (empty? filepaths))
+      (do
+        (println :top filepaths)
 
-    #_(pp/pprint input)))
+        (let [done (chan)]
+            (print-in-columns width spacing filepaths done)
+            (println :waiting-on-done)
+            (<!! done))))
+    
+    #_(pp/pprint input)
+    ))
 
 
