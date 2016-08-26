@@ -1,4 +1,4 @@
-(defproject concurtimes "0.1.0-SNAPSHOT"
+(defproject concurtimes "0.1.0"
   :description "Printing text in justified columns. An exercise for Concur."
   :url "http://tiltontec.com"
   :license {:name "The MIT License (MIT)"
