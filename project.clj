@@ -5,6 +5,7 @@
             :url "https://opensource.org/licenses/MIT"}
   :dependencies [[org.clojure/clojure "1.8.0"]
                  [org.clojure/core.async "0.2.385"]
+                 [com.taoensso/timbre "4.3.1"]
                  [org.clojure/tools.cli "0.2.4"]]
   :main ^:skip-aot concurtimes.core
   :target-path "target/%s"
