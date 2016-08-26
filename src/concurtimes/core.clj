@@ -99,93 +99,66 @@ boom
                                                   (char c) \space))))))))
     out))
 
-(go-cols "its-in-the-hole" "mobydick" "gettysburgh"
-  "cells-manifesto" "obama-wright")
-
 #_
-(with-open [out (clojure.java.io/writer "stuff.txt")]
-  (.write out "kkkkk"))
+(let [files [
+             "its-in-the-hole"
+             "mobydick"
+             "gettysburgh"
+             "cells-manifesto"
+             ;;"obama-wright"
+             ]]
+  (apply go-cols 80 2 files))
 
-(defn go-cols [& filenames]
-  (let [out (clojure.java.io/writer "stuff.txt")
-        col-width 25
-        pad "  "
+(defn go-cols [w p & filenames]
+  (let [
+        col-spacing (or p 2)
+        file-ct (max 1 (count filenames)) ;; avoid div by zero if no files
+        col-width (int (Math/floor (/ (- (or w 132)
+                                        (* (dec file-ct) col-spacing))
+                                     file-ct)))
+        col-pad (apply str (repeat col-spacing \space))
         filler (apply str (repeat col-width \space))
         feeders (map #(column-feeder (str "resources/" % ".txt") col-width)
                   filenames)
-        wnew #(.newLine out)
-        wout (fn [x]
-               (.write out x))]
-      (go-loop []
-        (let [chunks (loop [[f & rf] feeders
-                            taken []]
-                       (if (nil? f)
-                         taken
+        wnew #(print \newline) ;; #(.newLine out)
+        wout (fn [x] (println x)
+               #_(.write out x))
+        ]
+    
+    (go-loop []
+      (let [chunks (loop [[f & rf] feeders taken []]
+                     ;; asynch does not play well with fns or even FORs
+                     ;; so we have to gather in LOOP
+                     (if (nil? f) taken
                          (recur rf (conj taken (<! f)))))]
-          (cond
-            (every? nil? chunks)
-            (do
-              (wnew)
-              (wout "The End")
-              (.close out))
+        (cond
+          (every? nil? chunks)
+          (do
+            (wnew)
+            (wout "The End"))
           
-            :default
-            (do 
-              (doseq [c chunks]
-                (wout (or (when c (str/replace c \newline \!)) filler))
-                (wout pad))
-              (wnew)
-              (recur)))))
-      nil))
+          :default
+          (do 
+            (wout (str/join col-pad (map #(or % filler) chunks)))
+            (recur)))))
+    nil))
+
 
 #_
-(let [out (chan)
-      words (range 5)]
-  (go
-    (doseq [c words]
-      (>! out c))
-    (close! out))
+(defn -main [& args]
+  (let [cli (parse-opts args cli-options)]
+    (pp/pprint cli)))
 
-  (go-loop []
-    (let [c (<! out)]
-      (if (nil? c)
-        (do
-          (println :fini)
-          (println :again (<! out)))
-        (do
-          (println c)
-          (recur)))))
-  :eoj)
-#_
-(let [out (chan)
-      raw (slurp "resources/gettysburgh.txt")
-      splitter #"[^a-zA-Z\d-]"
-      words (str/split raw splitter)]
-  (go
-    (doseq [c words]
-      (>! out c))
-    (close! out))
-
-  (go-loop []
-    (let [c (<! out)]
-      (if (nil? c)
-        (println)
-        (do
-          (println c)
-          (recur)))))
-  :eoj)
-
-#_
-(map (fn [n c]
-       (println n c (int c)))
-  (range 40)
-  (slurp "resources/gettysburgh.txt"))
 
 (defn -main [& args]
   (let [[opts args banner]
         (cli args
-          ["-h" "--help" "Usage: (concurtimes <tex-file-path>)"
+          ["-h" "--help" "Usage: (concurtimes [<tex-file-path>)"
            :default false :flag true])]
+    (println :opts opts)
+    (println :args args)
+    (println :banner banner)
+    #_
     (cond
       (:help opts) (println banner)
       :default
@@ -201,7 +174,4 @@ boom
               (println (format "%9d %s" freq word))))
 
         (catch Exception e (str "caught exception: " (.getMessage e)))))))
-
-#_
-(time (-main "cells-manifesto.txt"))
 
