@@ -9,7 +9,6 @@
             [clojure.pprint :as pp])
   (:gen-class))
 
-
 (def times-cli
   [["-w" "--width PAGEWIDTH" "Page width in number of characters"
     :default 80
@@ -31,9 +30,6 @@
   )
 
 (declare column-feeder print-in-columns file-found?)
-
-#_
-(-main "-w80" "-s4" "-t2" "LICENSE")
 
 (defn -main [& args]
   #_ ;; uncomment during development so errors get through when async in play
@@ -74,13 +70,15 @@
         (cond
           (< width min-width)
           (println
-            (format "We will need a width of at least %d for %d files and %d spacing."
+            (format "We will need a width of at least %d for %d columns and %d spacing."
               min-width fct spacing))
 
           :default (print-in-columns filepaths width spacing))))
 
-    #_(pp/pprint input)))
+    (shutdown-agents)))
 
+#_
+(-main "-t2")
 
 (defn file-found? [path]
   (or (.exists (io/as-file path))
@@ -88,43 +86,35 @@
       (println (format "\nSuggested file <%s> not found.\n" path))
       false)))
 
-#_
-(-main "-w40" "-t2" "LICENSE")
-
 (defn print-in-columns [filepaths page-width col-spacing]
   (when-not (empty? filepaths)
-    (try
-      (let [
-            file-ct (count filepaths)
-            col-width (int (Math/floor (/ (- page-width
-                                            (* (dec file-ct) col-spacing))
-                                         file-ct)))
-            col-pad (apply str (repeat col-spacing \space))
-            filler (apply str (repeat col-width \space))
-            channels (repeat (count file-paths) (chan))
-            futures (map #(future
-                            (column-feeder-ex %1 %2 col-width))
-                      channels filepaths)
-            ]
+    (let [
+          file-ct (count filepaths)
+          col-width (int (Math/floor (/ (- page-width
+                                          (* (dec file-ct) col-spacing))
+                                       file-ct)))
+          col-pad (apply str (repeat col-spacing \space))
+          filler (apply str (repeat col-width \space))
+          channels (for [_ filepaths] (chan))
+          futures (doall (map #(future (column-feeder %1 %2 col-width %3))
+                           channels filepaths (range (count filepaths))))]
 
-          (loop []
-            (let [chunks (loop [[c & rc] channels taken []]
-                           ;; asynch does not play well with fns or even FORs
-                           ;; so we have to gather in LOOP
-                           (if c
-                             (recur rf (conj taken (<!! c)))
-                             taken))]
-              (cond
-                (every? nil? chunks)
-                (println "\nThe End\n")
-
-                :default
-                (do
-                  (println (str/join col-pad (map #(or % filler) chunks)))
-                  (recur))))))
-
-        (catch Exception e
-          (println "Uh-oh...")))))
+      ;; pull text
+      (loop []
+        (let [chunks (loop [[c & rc] channels taken []]
+                       ;; asynch does not play well with fns or even FORs
+                       ;; so we have to gather in LOOP
+                       (if c
+                         (recur rc (conj taken (<!! c)))
+                         taken))]
+          (cond
+            (every? nil? chunks)
+            (println "\nThe End\n")
+            
+            :default
+            (do
+              (println (str/join col-pad (map #(or % filler) chunks)))
+              (recur))))))))
 
 #_
 (Thread/setDefaultUncaughtExceptionHandler
@@ -134,12 +124,14 @@
                      :exception ex
                      :where (str "Uncaught exception on" (.getName thread))}))))
 
-(defn column-feeder-ex
+#_
+(-main "-t3")
+
+(defn column-feeder
   "Return a channel from which an output function
 can pull left-justified column lines of width <col-width>
 extracted from the file at <filepath>."
-  [out filepath col-width]
-  (println :cfex filepath)
+  [out filepath col-width id]
   (let [filler (apply str (repeat col-width \space))
         rdr (clojure.java.io/reader filepath)]
 
@@ -179,10 +171,11 @@ extracted from the file at <filepath>."
           (let [c (.read rdr)]
             (condp = c
               -1 (do
+                   (.close rdr)
                    (when (pos? (count buffer))
                      (>!! out (pad-out buffer)))
                    (close! out)
-                   (.close rdr))
+                   id)
 
               10 (do (>!! out (pad-out buffer))
                      (recur :nl 0 nil ""))
@@ -191,7 +184,7 @@ extracted from the file at <filepath>."
               (do (>!! out (pad-out buffer))
                   (recur :nl 0 nil ""))
 
-              9 ;; TODO: allow new TAB width parameter and space intelligently
+              9 ;; Tabs treated as single space
               (recur :ws (inc column) column (str buffer \space))
 
               32 (if (= state :nl)
@@ -201,5 +194,4 @@ extracted from the file at <filepath>."
               (recur :tx (inc column) last-ws-col
                 (str buffer
                   (if (< c 32)
-                    \space (char c)))))))))
-    out))
+                    \space (char c)))))))))))
