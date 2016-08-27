@@ -47,7 +47,7 @@
   (let [input (parse-opts args times-cli)
         {:keys [options arguments summary errors]} input
         {:keys [width spacing test help]} options
-        built-ins (let [known (vec (rest (file-seq 
+        built-ins (let [known (vec (rest (file-seq
                                            (clojure.java.io/file "./resources"))))]
                     (when (> test (count known))
                       (println (format "\nWarning: only %d test files exist in ./resources\n\n"
@@ -55,7 +55,7 @@
                     (map #(.getPath %)
                       (subvec known 0 (min test (count known)))))
         filepaths (concat arguments built-ins)]
-    
+
     (cond
       errors (doseq [e errors]
                (println e))
@@ -73,14 +73,14 @@
                         (* (dec fct) spacing))]
         (cond
           (< width min-width)
-          (println 
+          (println
             (format "We will need a width of at least %d for %d files and %d spacing."
               min-width fct spacing))
 
           :default (when-let [done-event-chan
                               (print-in-columns filepaths width spacing)]
                      (<!! done-event-chan)))))
-    
+
     #_(pp/pprint input)))
 
 (defn file-found? [path]
@@ -103,7 +103,7 @@
               feeders (for [fp filepaths]
                         (column-feeder fp col-width))
               ]
-          
+
           (go-loop []
             (let [chunks (loop [[f & rf] feeders taken []]
                            ;; asynch does not play well with fns or even FORs
@@ -115,15 +115,16 @@
                 (do
                   (println "\nThe End\n")
                   (>! done-event-chan true))
-                
+
                 :default
-                (do 
+                (do
                   (println (str/join col-pad (map #(or % filler) chunks)))
                   (recur))))))
-        
+
         (catch Exception e
           (println "Uh-oh...")
           (>!! done-event-chan :abend)))
+
       done-event-chan)))
 
 (defn column-feeder
@@ -136,56 +137,63 @@ extracted from the file at <filepath>."
         filler (apply str (repeat col-width \space))
         rdr (clojure.java.io/reader filepath)]
 
-    (go-loop [state :nl
+    (go-loop [
+              ;; valid states:
+              ;; :nl - at start of line
+              ;; :tx - in the middle of non-whitespace text
+              ;; :ws - in the middle of whitespace
+              state :nl
               column 0
-              last-ws nil
-              buff ""]
+              last-ws-col nil
+              buffer ""]
 
       (let [pad-out (fn [b]
                       ;; we cannot put to the channel from inside
                       ;; a function (async limitation) so just pad
                       (subs (str b filler) 0 col-width))]
         (cond
-          (>= column col-width)
+          (>= column col-width) ;; > should not occur, but...
           (condp = state
             :ws (do
-                  (>! out (pad-out buff))
+                  (>! out (pad-out buffer))
                   (recur :nl 0 nil ""))
-            :tx (if last-ws
+            :tx (if last-ws-col
                   (do
                     (>! out (pad-out
-                              (subs buff 0 (inc last-ws))))
-                    (let [new-buff (str/triml (subs buff last-ws))]
-                      (recur :tx (count new-buff) nil new-buff)))
-                  ;; whoa, that is a big word. Hyphenate badly...
+                              (subs buffer 0 (inc last-ws-col))))
+                    (let [new-buffer (str/triml (subs buffer last-ws-col))]
+                      (recur :tx (count new-buffer) nil new-buffer)))
+                  ;; whoa, big word. Hyphenate badly...
                   ;; TODO: hyphenate better
                   (do
-                    (>! out (pad-out (str (subs buff 0 (dec (count buff))) \-)))
-                    (recur :tx 1 nil (str (last buff))))))
-          
+                    (>! out (pad-out (str (subs buffer 0 (dec (count buffer))) \-)))
+                    (recur :tx 1 nil (str (last buffer))))))
+
           :default
           (let [c (.read rdr)]
             (condp = c
               -1 (do
-                   (when (pos? (count buff))
-                     (>! out (pad-out buff)))
+                   (when (pos? (count buffer))
+                     (>! out (pad-out buffer)))
                    (close! out)
                    (.close rdr))
 
-              10 (do (>! out (pad-out buff))
-                     (recur :nl 0 nil ""))
-              13 (do (>! out (pad-out buff))
+              10 (do (>! out (pad-out buffer))
                      (recur :nl 0 nil ""))
 
+              13 ;; maybe on Windows?
+              (do (>! out (pad-out buffer))
+                  (recur :nl 0 nil ""))
+
               9 ;; TODO: allow new TAB width parameter and space intelligently
-              (recur :ws (inc column) column (str buff \space))
+              (recur :ws (inc column) column (str buffer \space))
 
               32 (if (= state :nl)
                    (recur :nl 0 nil "")
-                   (recur :ws (inc column) column (str buff \space)))
+                   (recur :ws (inc column) column (str buffer \space)))
 
-              (recur :tx (inc column) last-ws
-                (str buff
+              (recur :tx (inc column) last-ws-col
+                (str buffer
                   (if (< c 32)
                     \space (char c)))))))))
     out))
