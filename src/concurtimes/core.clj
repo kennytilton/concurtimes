@@ -21,16 +21,16 @@
     :parse-fn #(Integer/parseInt %)
     :validate [#(<= 0 % 132) "Must be a number from 0 to 232"]]
 
-   ["-t" "--test TESTFILECOUNT" "Number of test files to use"
+   ["-t" "--test TESTFILECOUNT" "Number of test files (from ./resources) to use"
     :default 0
     :parse-fn #(Integer/parseInt %)
-    :validate [#(<= 0 % 5) "Must be a number from 0 to 5"]]
+    :validate [#(>= % 0) "Must be a number from 0 to the number of files in ./resources."]]
 
    ;; A boolean option defaulting to nil
    ["-h" "--help"]]
   )
 
-(declare column-feeder print-in-columns)
+(declare column-feeder print-in-columns file-found?)
 
 #_
 (-main "-w80" "-t4" "-s2" )
@@ -51,12 +51,17 @@
   (let [input (parse-opts args times-cli)
         {:keys [options arguments summary errors]} input
         {:keys [width spacing test help]} options
-        built-ins (map #(.getPath %)
+        built-ins (let [known (rest (file-seq 
+                                (clojure.java.io/file "./resources")))]
+                    (when (> test (count known))
+                      (println (format "\nWarning: only %d test files exist in ./resources\n\n"
+                        (count known))))
+                    (map #(.getPath %)
                     (subvec
                       (vec
                         (rest (file-seq 
                                 (clojure.java.io/file "./resources"))))
-                      0 test))
+                      0 (min test (count known)))))
         filepaths (concat arguments built-ins)]
     
     (cond
@@ -66,22 +71,27 @@
              "Options:\n" (subs summary 1))
 
       (not (empty? filepaths))
-      (cond
-        (< (/ (- width (* (dec (count filepaths)) spacing))
-             (count filepaths))
-          2)
-        (println "We will need at least two character columns for the hyphens.")
-        :default
-        (let [done (chan)]
-          (print-in-columns filepaths width spacing done)
-          (println :waiting-on-done)
-          (<!! done))))
+      (when (every? file-found? arguments)
+        (cond
+          (< (/ (- width (* (dec (count filepaths)) spacing))
+               (count filepaths))
+            2)
+          (println "We will need at least two character columns for the hyphens.")
+          :default
+          (let [done (chan)]
+            (print-in-columns filepaths width spacing done)
+            (<!! done)))))
     
     #_(pp/pprint input)))
 
+(defn file-found? [path]
+  (or (.exists (io/as-file path))
+    (do
+      (println (format "\nSuggested file <%s> not found.\n" path))
+      false)))
 
 #_
-(-main "-w10" "-t1" "-s2" )
+(-main "-w132" "-t10" "-s2" "LICENSE")
 
 (defn print-in-columns [filepaths w p done]
   (cond
