@@ -33,18 +33,14 @@
 (declare column-feeder print-in-columns file-found?)
 
 #_
-(-main "-w2" "-t4" "-s2" )
-
-#_
-(-main "-w80" "-t3" "-s2" )
+(-main "-w80" "-s4" "-t2" "LICENSE")
 
 (defn -main [& args]
-  #_
+  #_ ;; uncomment during development so errors get through when async in play
   (Thread/setDefaultUncaughtExceptionHandler
      (reify Thread$UncaughtExceptionHandler
        (uncaughtException [_ thread ex]
          (log/error {:what :uncaught-exception
-
                      :exception ex
                      :where (str "Uncaught exception on" (.getName thread))}))))
 
@@ -78,12 +74,12 @@
         (cond
           (< width min-width)
           (println 
-            (format "We will need width of at least %d for %d files and %d spacing."
+            (format "We will need a width of at least %d for %d files and %d spacing."
               min-width fct spacing))
 
-          :default (let [done (chan)]
-                     (print-in-columns filepaths width spacing done)
-                     (<!! done)))))
+          :default (when-let [done-event-chan
+                              (print-in-columns filepaths width spacing)]
+                     (<!! done-event-chan)))))
     
     #_(pp/pprint input)))
 
@@ -93,48 +89,42 @@
       (println (format "\nSuggested file <%s> not found.\n" path))
       false)))
 
-#_
-(-main "-w80" "-s2" "-t3" "LICENSE")
-
-(defn print-in-columns [filepaths page-width col-spacing done-msg-chan]
-  (cond
-    ;; this check is now superfluous, but protects the unwitting developer...
-    (empty? filepaths) (do
-                         (println :sending-done)
-                         (>!! done-msg-chan :no-files))
-    :default
-    (try
-      (let [
-            file-ct (count filepaths)
-            col-width (int (Math/floor (/ (- page-width
-                                            (* (dec file-ct) col-spacing))
-                                         file-ct)))
-            col-pad (apply str (repeat col-spacing \space))
-            filler (apply str (repeat col-width \space))
-            feeders (for [fp filepaths]
-                      (column-feeder fp col-width))
-            ]
-
-        (go-loop []
-          (let [chunks (loop [[f & rf] feeders taken []]
-                         ;; asynch does not play well with fns or even FORs
-                         ;; so we have to gather in LOOP
-                         (if (nil? f) taken
-                             (recur rf (conj taken (<! f)))))]
-            (cond
-              (every? nil? chunks)
-              (do
-                (println "\nThe End\n")
-                (>! done-msg-chan true))
-              
-              :default
-              (do 
-                (println (str/join col-pad (map #(or % filler) chunks)))
-                (recur))))))
-
-      (catch Exception e
-        (println :error e)
-        (>!! done-msg-chan :abend)))))
+(defn print-in-columns [filepaths page-width col-spacing]
+  (when-not (empty? filepaths)
+    (let [done-event-chan (chan)]
+      (try
+        (let [
+              file-ct (count filepaths)
+              col-width (int (Math/floor (/ (- page-width
+                                              (* (dec file-ct) col-spacing))
+                                           file-ct)))
+              col-pad (apply str (repeat col-spacing \space))
+              filler (apply str (repeat col-width \space))
+              feeders (for [fp filepaths]
+                        (column-feeder fp col-width))
+              ]
+          
+          (go-loop []
+            (let [chunks (loop [[f & rf] feeders taken []]
+                           ;; asynch does not play well with fns or even FORs
+                           ;; so we have to gather in LOOP
+                           (if (nil? f) taken
+                               (recur rf (conj taken (<! f)))))]
+              (cond
+                (every? nil? chunks)
+                (do
+                  (println "\nThe End\n")
+                  (>! done-event-chan true))
+                
+                :default
+                (do 
+                  (println (str/join col-pad (map #(or % filler) chunks)))
+                  (recur))))))
+        
+        (catch Exception e
+          (println "Uh-oh...")
+          (>!! done-event-chan :abend)))
+      done-event-chan)))
 
 (defn column-feeder
   "Return a channel from which an output function
@@ -196,6 +186,6 @@ extracted from the file at <filepath>."
 
               (recur :tx (inc column) last-ws
                 (str buff
-                  (if (< c 32) ;; TODO: support Unicode
+                  (if (< c 32)
                     \space (char c)))))))))
     out))
