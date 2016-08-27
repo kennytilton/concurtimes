@@ -77,11 +77,10 @@
             (format "We will need a width of at least %d for %d files and %d spacing."
               min-width fct spacing))
 
-          :default (when-let [done-event-chan
-                              (print-in-columns filepaths width spacing)]
-                     (<!! done-event-chan)))))
+          :default (print-in-columns filepaths width spacing))))
 
     #_(pp/pprint input)))
+
 
 (defn file-found? [path]
   (or (.exists (io/as-file path))
@@ -89,32 +88,35 @@
       (println (format "\nSuggested file <%s> not found.\n" path))
       false)))
 
+#_
+(-main "-w40" "-t2" "LICENSE")
+
 (defn print-in-columns [filepaths page-width col-spacing]
   (when-not (empty? filepaths)
-    (let [done-event-chan (chan)]
-      (try
-        (let [
-              file-ct (count filepaths)
-              col-width (int (Math/floor (/ (- page-width
-                                              (* (dec file-ct) col-spacing))
-                                           file-ct)))
-              col-pad (apply str (repeat col-spacing \space))
-              filler (apply str (repeat col-width \space))
-              feeders (for [fp filepaths]
-                        (column-feeder fp col-width))
-              ]
+    (try
+      (let [
+            file-ct (count filepaths)
+            col-width (int (Math/floor (/ (- page-width
+                                            (* (dec file-ct) col-spacing))
+                                         file-ct)))
+            col-pad (apply str (repeat col-spacing \space))
+            filler (apply str (repeat col-width \space))
+            channels (repeat (count file-paths) (chan))
+            futures (map #(future
+                            (column-feeder-ex %1 %2 col-width))
+                      channels filepaths)
+            ]
 
-          (go-loop []
-            (let [chunks (loop [[f & rf] feeders taken []]
+          (loop []
+            (let [chunks (loop [[c & rc] channels taken []]
                            ;; asynch does not play well with fns or even FORs
                            ;; so we have to gather in LOOP
-                           (if (nil? f) taken
-                               (recur rf (conj taken (<! f)))))]
+                           (if c
+                             (recur rf (conj taken (<!! c)))
+                             taken))]
               (cond
                 (every? nil? chunks)
-                (do
-                  (println "\nThe End\n")
-                  (>! done-event-chan true))
+                (println "\nThe End\n")
 
                 :default
                 (do
@@ -122,30 +124,34 @@
                   (recur))))))
 
         (catch Exception e
-          (println "Uh-oh...")
-          (>!! done-event-chan :abend)))
+          (println "Uh-oh...")))))
 
-      done-event-chan)))
+#_
+(Thread/setDefaultUncaughtExceptionHandler
+     (reify Thread$UncaughtExceptionHandler
+       (uncaughtException [_ thread ex]
+         (log/error {:what :uncaught-exception
+                     :exception ex
+                     :where (str "Uncaught exception on" (.getName thread))}))))
 
-(defn column-feeder
+(defn column-feeder-ex
   "Return a channel from which an output function
 can pull left-justified column lines of width <col-width>
 extracted from the file at <filepath>."
-  [filepath col-width]
-
-  (let [out (chan)
-        filler (apply str (repeat col-width \space))
+  [out filepath col-width]
+  (println :cfex filepath)
+  (let [filler (apply str (repeat col-width \space))
         rdr (clojure.java.io/reader filepath)]
 
-    (go-loop [
-              ;; valid states:
-              ;; :nl - at start of line
-              ;; :tx - in the middle of non-whitespace text
-              ;; :ws - in the middle of whitespace
-              state :nl
-              column 0
-              last-ws-col nil
-              buffer ""]
+    (loop [
+           ;; valid states:
+           ;; :nl - at start of line
+           ;; :tx - in the middle of non-whitespace text
+           ;; :ws - in the middle of whitespace
+           state :nl
+           column 0
+           last-ws-col nil
+           buffer ""]
 
       (let [pad-out (fn [b]
                       ;; we cannot put to the channel from inside
@@ -155,18 +161,18 @@ extracted from the file at <filepath>."
           (>= column col-width) ;; > should not occur, but...
           (condp = state
             :ws (do
-                  (>! out (pad-out buffer))
+                  (>!! out (pad-out buffer))
                   (recur :nl 0 nil ""))
             :tx (if last-ws-col
                   (do
-                    (>! out (pad-out
+                    (>!! out (pad-out
                               (subs buffer 0 (inc last-ws-col))))
                     (let [new-buffer (str/triml (subs buffer last-ws-col))]
                       (recur :tx (count new-buffer) nil new-buffer)))
                   ;; whoa, big word. Hyphenate badly...
                   ;; TODO: hyphenate better
                   (do
-                    (>! out (pad-out (str (subs buffer 0 (dec (count buffer))) \-)))
+                    (>!! out (pad-out (str (subs buffer 0 (dec (count buffer))) \-)))
                     (recur :tx 1 nil (str (last buffer))))))
 
           :default
@@ -174,15 +180,15 @@ extracted from the file at <filepath>."
             (condp = c
               -1 (do
                    (when (pos? (count buffer))
-                     (>! out (pad-out buffer)))
+                     (>!! out (pad-out buffer)))
                    (close! out)
                    (.close rdr))
 
-              10 (do (>! out (pad-out buffer))
+              10 (do (>!! out (pad-out buffer))
                      (recur :nl 0 nil ""))
 
               13 ;; maybe on Windows?
-              (do (>! out (pad-out buffer))
+              (do (>!! out (pad-out buffer))
                   (recur :nl 0 nil ""))
 
               9 ;; TODO: allow new TAB width parameter and space intelligently
