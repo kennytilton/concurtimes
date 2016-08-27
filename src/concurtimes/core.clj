@@ -14,7 +14,7 @@
   [["-w" "--width PAGEWIDTH" "Page width in number of characters"
     :default 80
     :parse-fn #(Integer/parseInt %)
-    :validate [#(<= 10 % 256) "Must be a number from 10 to 256"]]
+    :validate [#(<= 2 % 256) "Must be a number from 2 to 256"]]
 
    ["-s" "--spacing COLUMNSPACING" "Column spacing in number of spaces"
     :default 4
@@ -33,7 +33,7 @@
 (declare column-feeder print-in-columns file-found?)
 
 #_
-(-main "-w80" "-t4" "-s2" )
+(-main "-w2" "-t4" "-s2" )
 
 #_
 (-main "-w80" "-t3" "-s2" )
@@ -51,36 +51,39 @@
   (let [input (parse-opts args times-cli)
         {:keys [options arguments summary errors]} input
         {:keys [width spacing test help]} options
-        built-ins (let [known (rest (file-seq 
-                                (clojure.java.io/file "./resources")))]
+        built-ins (let [known (vec (rest (file-seq 
+                                           (clojure.java.io/file "./resources"))))]
                     (when (> test (count known))
                       (println (format "\nWarning: only %d test files exist in ./resources\n\n"
                         (count known))))
                     (map #(.getPath %)
-                    (subvec
-                      (vec
-                        (rest (file-seq 
-                                (clojure.java.io/file "./resources"))))
-                      0 (min test (count known)))))
+                      (subvec known 0 (min test (count known)))))
         filepaths (concat arguments built-ins)]
     
     (cond
       errors (doseq [e errors]
                (println e))
+
       help (println "\nUsage:\n\n    concurtimes options* files*\n\n"
              "Options:\n" (subs summary 1))
 
-      (not (empty? filepaths))
-      (when (every? file-found? arguments)
+      (empty? filepaths) (do)
+
+      (not (every? file-found? arguments)) (do)
+
+      :default
+      (let [fct (count filepaths)
+            min-width (+ (* 2 fct)
+                        (* (dec fct) spacing))]
         (cond
-          (< (/ (- width (* (dec (count filepaths)) spacing))
-               (count filepaths))
-            2)
-          (println "We will need at least two character columns for the hyphens.")
-          :default
-          (let [done (chan)]
-            (print-in-columns filepaths width spacing done)
-            (<!! done)))))
+          (< width min-width)
+          (println 
+            (format "We will need width of at least %d for %d files and %d spacing."
+              min-width fct spacing))
+
+          :default (let [done (chan)]
+                     (print-in-columns filepaths width spacing done)
+                     (<!! done)))))
     
     #_(pp/pprint input)))
 
@@ -91,19 +94,19 @@
       false)))
 
 #_
-(-main "-w132" "-t10" "-s2" "LICENSE")
+(-main "-w80" "-s2" "-t3" "LICENSE")
 
-(defn print-in-columns [filepaths w p done]
+(defn print-in-columns [filepaths page-width col-spacing done-msg-chan]
   (cond
+    ;; this check is now superfluous, but protects the unwitting developer...
     (empty? filepaths) (do
                          (println :sending-done)
-                         (>!! done :no-files))
+                         (>!! done-msg-chan :no-files))
     :default
     (try
       (let [
-            col-spacing (or p 2)
             file-ct (count filepaths)
-            col-width (int (Math/floor (/ (- (or w 132)
+            col-width (int (Math/floor (/ (- page-width
                                             (* (dec file-ct) col-spacing))
                                          file-ct)))
             col-pad (apply str (repeat col-spacing \space))
@@ -121,17 +124,17 @@
             (cond
               (every? nil? chunks)
               (do
-                (print \newline)
-                (println "The End")
-                (>! done true))
+                (println "\nThe End\n")
+                (>! done-msg-chan true))
               
               :default
               (do 
                 (println (str/join col-pad (map #(or % filler) chunks)))
                 (recur))))))
+
       (catch Exception e
         (println :error e)
-        (>!! done :abend)))))
+        (>!! done-msg-chan :abend)))))
 
 (defn column-feeder
   "Return a channel from which an output function
@@ -149,6 +152,8 @@ extracted from the file at <filepath>."
               buff ""]
 
       (let [pad-out (fn [b]
+                      ;; we cannot put to the channel from inside
+                      ;; a function (async limitation) so just pad
                       (subs (str b filler) 0 col-width))]
         (cond
           (>= column col-width)
@@ -176,15 +181,21 @@ extracted from the file at <filepath>."
                      (>! out (pad-out buff)))
                    (close! out)
                    (.close rdr))
+
               10 (do (>! out (pad-out buff))
                      (recur :nl 0 nil ""))
               13 (do (>! out (pad-out buff))
                      (recur :nl 0 nil ""))
-              9 (recur :ws (inc column) column (str buff \space))
+
+              9 ;; TODO: allow new TAB width parameter and space intelligently
+              (recur :ws (inc column) column (str buff \space))
+
               32 (if (= state :nl)
                    (recur :nl 0 nil "")
                    (recur :ws (inc column) column (str buff \space)))
-              (recur :tx (inc column) last-ws (str buff 
-                                                (if (< 32 c 128)
-                                                  (char c) \space))))))))
+
+              (recur :tx (inc column) last-ws
+                (str buff
+                  (if (< c 32) ;; TODO: support Unicode
+                    \space (char c)))))))))
     out))
