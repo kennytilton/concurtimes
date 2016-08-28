@@ -61,12 +61,13 @@
 
       (empty? filepaths) (do)
 
-      (not (every? file-found? arguments)) (do)
+      (not-every? true? (map file-found? arguments)) (do)
 
       :default
       (let [fct (count filepaths)
             min-width (+ (* 2 fct)
                         (* (dec fct) spacing))]
+        (println :twf)
         (cond
           (< width min-width)
           (println
@@ -75,10 +76,11 @@
 
           :default (print-in-columns filepaths width spacing))))
 
+    ;; WARNING: comment this out for use with REPL
     (shutdown-agents)))
 
 #_
-(-main "-t2")
+(-main "-t1" "LICENSE")
 
 (defn file-found? [path]
   (or (.exists (io/as-file path))
@@ -88,25 +90,23 @@
 
 (defn print-in-columns [filepaths page-width col-spacing]
   (when-not (empty? filepaths)
+    (println :pic)
     (let [
           file-ct (count filepaths)
-          col-width (int (Math/floor (/ (- page-width
-                                          (* (dec file-ct) col-spacing))
-                                       file-ct)))
+          col-width (int (Math/floor
+                           (/ (- page-width
+                                (* (dec file-ct) col-spacing))
+                             file-ct)))
           col-pad (apply str (repeat col-spacing \space))
           filler (apply str (repeat col-width \space))
           channels (for [_ filepaths] (chan))
-          futures (doall (map #(future (column-feeder %1 %2 col-width %3))
-                           channels filepaths (range (count filepaths))))]
+          futures (doall ;; kick off feeders...
+                    (map #(future (column-feeder %1 %2 col-width %3))
+                      channels filepaths (range (count filepaths))))]
 
-      ;; pull text
+      ;; ...then pull text:
       (loop []
-        (let [chunks (loop [[c & rc] channels taken []]
-                       ;; asynch does not play well with fns or even FORs
-                       ;; so we have to gather in LOOP
-                       (if c
-                         (recur rc (conj taken (<!! c)))
-                         taken))]
+        (let [chunks (map <!! channels)]
           (cond
             (every? nil? chunks)
             (println "\nThe End\n")
