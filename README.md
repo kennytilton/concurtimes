@@ -24,8 +24,7 @@ To include arbitrary other files with one built-in:
     $ bin/concurtimes -w80 -s4 -t1 LICENSE src/concurtimes/core.clj
     
 ### Bugs
-No known bugs, but I just thought of a limitation: you can add more built-ins to the resources directory
-but there is an edit on the CLI args that prevents more than five from being shown.
+No known bugs.
 
 ## License
 
