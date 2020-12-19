@@ -32,7 +32,7 @@
 (declare column-feeder print-in-columns file-found?)
 
 (defn -main [& args]
-  #_ ;; uncomment during development so errors get through when async in play
+  ;; uncomment during development so errors get through when async in play
   (Thread/setDefaultUncaughtExceptionHandler
      (reify Thread$UncaughtExceptionHandler
        (uncaughtException [_ thread ex]
@@ -40,7 +40,8 @@
                      :exception ex
                      :where (str "Uncaught exception on" (.getName thread))}))))
 
-  (let [input (parse-opts args times-cli)
+  (let [start (System/currentTimeMillis)
+        input (parse-opts args times-cli)
         {:keys [options arguments summary errors]} input
         {:keys [width spacing test help]} options
         built-ins (let [known (vec (rest (file-seq
@@ -77,10 +78,14 @@
           :default (print-in-columns filepaths width spacing))))
 
     ;; WARNING: comment this out for use with REPL
-    (shutdown-agents)))
+    #_ (shutdown-agents)
+    (prn :elapsed (- (System/currentTimeMillis) start))
+    ))
 
 #_
 (-main "-t1" "LICENSE")
+
+#_ (-main "-t5")
 
 (defn file-found? [path]
   (or (.exists (io/as-file path))
