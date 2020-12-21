@@ -86,6 +86,8 @@
   )
 
 
+#_ (-main "-t5")
+
 (defn file-found? [path]
   (or (.exists (io/as-file path))
     (do
