@@ -32,7 +32,7 @@
 (declare column-feeder print-in-columns file-found?)
 
 (defn -main [& args]
-  #_ ;; uncomment during development so errors get through when async in play
+  ;; uncomment during development so errors get through when async in play
   (Thread/setDefaultUncaughtExceptionHandler
      (reify Thread$UncaughtExceptionHandler
        (uncaughtException [_ thread ex]
@@ -40,7 +40,8 @@
                      :exception ex
                      :where (str "Uncaught exception on" (.getName thread))}))))
 
-  (let [input (parse-opts args times-cli)
+  (let [start (System/currentTimeMillis)
+        input (parse-opts args times-cli)
         {:keys [options arguments summary errors]} input
         {:keys [width spacing test help]} options
         built-ins (let [known (vec (rest (file-seq
@@ -67,7 +68,6 @@
       (let [fct (count filepaths)
             min-width (+ (* 2 fct)
                         (* (dec fct) spacing))]
-        (println :twf)
         (cond
           (< width min-width)
           (println
@@ -77,10 +77,14 @@
           :default (print-in-columns filepaths width spacing))))
 
     ;; WARNING: comment this out for use with REPL
-    (shutdown-agents)))
+    #_ (shutdown-agents)
+    (prn :elapsed (- (System/currentTimeMillis) start))))
 
-#_
-(-main "-t1" "LICENSE")
+(comment
+  (-main "-t5" "-w80" "-s4")
+  (-main "-h")
+  )
+
 
 (defn file-found? [path]
   (or (.exists (io/as-file path))
@@ -90,7 +94,7 @@
 
 (defn print-in-columns [filepaths page-width col-spacing]
   (when-not (empty? filepaths)
-    (println :pic)
+    (spit "times.txt" "HEADLINE\n\n")
     (let [
           file-ct (count filepaths)
           col-width (int (Math/floor
@@ -109,11 +113,13 @@
         (let [chunks (map <!! channels)]
           (cond
             (every? nil? chunks)
-            (println "\nThe End\n")
+            (spit "times.txt" "\nThe End\n" :append true)
             
             :default
             (do
-              (println (str/join col-pad (map #(or % filler) chunks)))
+              (spit "times.txt"
+                    (str/join col-pad (map #(or % filler) chunks))
+                    :append true)
               (recur))))))))
 
 #_
@@ -125,7 +131,7 @@
                      :where (str "Uncaught exception on" (.getName thread))}))))
 
 #_
-(-main "-t3")
+(-main "-t5")
 
 (defn column-feeder
   "Return a channel from which an output function
