@@ -81,18 +81,17 @@
     (prn :elapsed (- (System/currentTimeMillis) start))))
 
 (comment
-  (-main "-t5" "-w80" "-s4")
+  (-main "-t2" "-w80" "-s4")
   (-main "-h")
   )
-
-
-#_ (-main "-t5")
 
 (defn file-found? [path]
   (or (.exists (io/as-file path))
     (do
       (println (format "\nSuggested file <%s> not found.\n" path))
       false)))
+
+(-main "-t5" "-w80" "-s4")
 
 (defn print-in-columns [filepaths page-width col-spacing]
   (when-not (empty? filepaths)
@@ -105,7 +104,7 @@
                              file-ct)))
           col-pad (apply str (repeat col-spacing \space))
           filler (apply str (repeat col-width \space))
-          channels (for [_ filepaths] (chan))
+          channels (for [_ filepaths] (chan 3))
           futures (doall ;; kick off feeders...
                     (map #(future (column-feeder %1 %2 col-width %3))
                       channels filepaths (range (count filepaths))))]
@@ -140,6 +139,7 @@
 can pull left-justified column lines of width <col-width>
 extracted from the file at <filepath>."
   [out filepath col-width id]
+  (prn :file filepath id)
   (let [filler (apply str (repeat col-width \space))
         rdr (clojure.java.io/reader filepath)]
 
